@@ -207,7 +207,7 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_set, shuffle=False, drop_last=False, batch_size=1, **loader_args)
 
     '''3. Set up Wandb'''
-    experiment = wandb.init(project='U-Net', resume='allow', anonymous='must', group=args.exp_group)
+    experiment = wandb.init(project='ICAseg', resume='allow', anonymous='must', group=args.exp_group)
     experiment.config.update(args)
     experiment.define_metric("validation dice", summary="max")
     experiment.define_metric("train loss", summary="min")
