@@ -163,12 +163,12 @@ if __name__ == '__main__':
     args = get_args()
     assert args.input_type == 'minip', "Invalid input image type"
     assert args.label_type == 'vessel', "Invalid label type"
-    train_img_dir = os.path.join('./data/ICAseg', 'train', 'minip')
-    train_mask_dir = os.path.join('./data/ICAseg', 'train', 'masks')
-    val_img_dir = os.path.join('./data/ICAseg', 'val', 'minip')
-    val_mask_dir = os.path.join('./data/ICAseg', 'val', 'masks')
-    test_img_dir = os.path.join('./data/ICAseg', 'test', 'minip')
-    test_mask_dir = os.path.join('./data/ICAseg', 'test', 'masks')
+    train_img_dir = os.path.join('./data/ICATopSeg', 'train', 'minip')
+    train_mask_dir = os.path.join('./data/ICATopSeg', 'train', 'masks')
+    val_img_dir = os.path.join('./data/ICATopSeg', 'val', 'minip')
+    val_mask_dir = os.path.join('./data/ICATopSeg', 'val', 'masks')
+    test_img_dir = os.path.join('./data/ICATopSeg', 'test', 'minip')
+    test_mask_dir = os.path.join('./data/ICATopSeg', 'test', 'masks')
     n_classes = (1, 2)[args.label_type == 'av']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
@@ -207,7 +207,7 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_set, shuffle=False, drop_last=False, batch_size=1, **loader_args)
 
     '''3. Set up Wandb'''
-    experiment = wandb.init(project='ICAseg', resume='allow', anonymous='must', group=args.exp_group)
+    experiment = wandb.init(project='ICATopSeg', resume='allow', anonymous='must', group=args.exp_group)
     experiment.config.update(args)
     experiment.define_metric("validation dice", summary="max")
     experiment.define_metric("train loss", summary="min")
