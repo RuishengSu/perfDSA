@@ -13,6 +13,8 @@ import pandas as pd
 from natsort import natsorted
 from scipy.interpolate import interp1d
 import pydicom
+from skimage.transform import resize
+from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +37,16 @@ def cut_seq(seq, max_len):
 
 def prepare_minip(row, mode):  # mode = 'train', 'val', or 'test'
     """Preparing minip for model input."""
-    dcm_path = "./data/ICAseg/all/DSA/{}/{}.dcm".format(row.patient_id, row.filename)
+    dcm_path = os.path.join(all_data_dir, "DSA", row.patient_id, "{}.dcm".format(row.filename))
     ds = pydicom.dcmread(dcm_path, defer_size="1 KB", stop_before_pixels=False, force=False)
     assert 2 ** (ds.BitsStored - 1) < ds.pixel_array.max() < 2 ** ds.BitsStored, \
         "Error: bits stored: {}, pixel value max: {}".format(ds.BitsStored, ds.pixel_array.max())
     seq = ds.pixel_array
+    if seq.shape[1:] != (1024, 1024):
+        seq = resize(seq, (seq.shape[0], 1024, 1024), anti_aliasing=False, preserve_range=True)
     seq = 255 * (seq.astype(np.float32) / (2 ** ds.BitsStored - 1))
     img_minip = np.min(seq, axis=0).astype(np.uint8)
-    dst_minip_path = "./data/ICAseg/{}/minip/{}.png".format(mode, row.filename)
+    dst_minip_path = "./data/ICATopSeg/{}/minip/{}.png".format(mode, row.filename)
     Path(dst_minip_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving minip to {}".format(dst_minip_path))
     imageio.imwrite(dst_minip_path, img_minip)
@@ -117,14 +121,18 @@ def prepare_masks(row, mode):  # mode = 'train', 'val', or 'test'
     """Prepare artery-vein segmentation ground-truth segmentations"""
     patient_id = row.patient_id
 
-    '''1. Preparing artery mask'''
-    ica_vessel_mask_path = "./data/ICAseg/all/masks/{}_{}-mask-ica.bmp".format(patient_id, row.filename)
-    assert os.path.isfile(ica_vessel_mask_path)
-    ica_vessel_mask = cv.imread(ica_vessel_mask_path, cv.IMREAD_GRAYSCALE)
-    dst_mask_path = "./data/ICAseg/{}/masks/{}.png".format(mode, row.filename)
+    '''1. Preparing ICA top vessel mask'''
+    ica_top_vessel_mask_path = os.path.join(all_data_dir, "masks", patient_id, "{}_mask.png".format(row.filename))
+    # ica_vessel_mask_path = "./data/ICATopSeg/all/masks/{}_{}-mask-ica.bmp".format(patient_id, row.filename)
+    assert os.path.isfile(ica_top_vessel_mask_path)
+    ica_top_vessel_mask = cv.imread(ica_top_vessel_mask_path, cv.IMREAD_GRAYSCALE)
+    if ica_top_vessel_mask != (1024, 1024):
+        ica_top_vessel_mask = resize(ica_top_vessel_mask, (1024, 1024), anti_aliasing=False, preserve_range=True)
+    ica_top_vessel_mask = np.asarray(ica_top_vessel_mask >= 128, dtype=np.uint8)
+    dst_mask_path = "./data/ICATopSeg/{}/masks/{}.png".format(mode, row.filename)
     Path(dst_mask_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving mask to {}".format(dst_mask_path))
-    imageio.imwrite(dst_mask_path, ica_vessel_mask)
+    imageio.imwrite(dst_mask_path, ica_top_vessel_mask)
 
 
 if __name__ == '__main__':
@@ -132,28 +140,35 @@ if __name__ == '__main__':
                         format='%(asctime)s %(levelname)-8s %(message)s',
                         handlers=[logging.StreamHandler(sys.stdout)])
 
-    input_dicom_dir = "/mnt/datassd/data_perfDSA/DSA/"
-    input_csv_path = "/mnt/datassd/data_perfDSA/all.csv"
-    df_info = pd.read_csv(input_csv_path)
-    patient_ids = df_info['patient_id'].unique().tolist()
-    random.seed(0)
-    test_patients = random.sample(patient_ids, round(0.3 * len(patient_ids)))
-    train_val_patients = [p for p in patient_ids if p not in test_patients]
-    train_patients = random.sample(train_val_patients, round(0.5 * len(patient_ids)))
+    all_data_dir = "./data/ICATopSeg/all"
+    all_csv_path = "./data/ICATopSeg/all.xlsx"
 
-    # df_info = pd.read_csv("/mnt/datassd/data_perfDSA/all.csv")
-    # patient_ids_in_csv = df_info['patient_id'].unique().tolist()
-    # for p in patient_ids_in_csv:
-    #     if p not in patient_ids:
-    #         df_info.drop(df_info[df_info['patient_id'] == p].index, inplace=True)
-    # df_info.to_csv("/mnt/datassd/data_perfDSA/all_150.csv", index=False)
+    # df_info = pd.read_excel(all_csv_path)
+    # df_info = df_info[df_info['AIF']]
+    # df_patients = df_info[['patient_id', 'mrs_rev_di']].drop_duplicates()
+    # train_patients, temp_patients = train_test_split(df_patients, test_size=0.5, stratify=df_patients['mrs_rev_di'], random_state=42)
+    # val_patients, test_patients = train_test_split(temp_patients, test_size=0.6, stratify=temp_patients['mrs_rev_di'], random_state=42)
+    #
+    # df_test = df_info[df_info['patient_id'].isin(test_patients['patient_id'])]
+    # df_train = df_info[df_info['patient_id'].isin(train_patients['patient_id'])]
+    # df_val = df_info[df_info['patient_id'].isin(val_patients['patient_id'])]
+    # logger.info("Total patients: {}".format(df_info['patient_id'].nunique()))
+    # logger.info("Training patients: {}".format(df_train['patient_id'].nunique()))
+    # logger.info("Validation patients: {}".format(df_val['patient_id'].nunique()))
+    # logger.info("Testing patients: {}".format(df_test['patient_id'].nunique()))
+    # df_info.to_csv("./data/ICATopSeg/all.csv", index=False)
+    # df_test.to_csv("./data/ICATopSeg/test.csv", index=False)
+    # df_train.to_csv("./data/ICATopSeg/train.csv", index=False)
+    # df_val.to_csv("./data/ICATopSeg/val.csv", index=False)
 
-    df_test = df_info[df_info['patient_id'].isin(test_patients)]
-    df_train = df_info[df_info['patient_id'].isin(train_patients)]
-    df_val = df_info[~df_info['patient_id'].isin(train_patients + test_patients)]
-    df_test.to_csv("./data/ICAseg/test.csv", index=False)
-    df_train.to_csv("./data/ICAseg/train.csv", index=False)
-    df_val.to_csv("./data/ICAseg/val.csv", index=False)
+    df_all = pd.read_csv("./data/ICATopSeg/all.csv")
+    df_train = pd.read_csv("./data/ICATopSeg/train.csv")
+    df_val = pd.read_csv("./data/ICATopSeg/val.csv")
+    df_test = pd.read_csv("./data/ICATopSeg/test.csv")
+    print("Total set - patients: {}, images: {}".format(df_all['patient_id'].nunique(), df_all.shape[0]))
+    print("Training set - patients: {}, images: {}".format(df_train['patient_id'].nunique(), df_train.shape[0]))
+    print("Validation set - patients: {}, images: {}".format(df_val['patient_id'].nunique(), df_val.shape[0]))
+    print("Test set - patients: {}, images: {}".format(df_test['patient_id'].nunique(), df_test.shape[0]))
 
     '''Prepare sequences'''
     for idx, row in enumerate(df_train.itertuples()):

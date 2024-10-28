@@ -160,6 +160,7 @@ if __name__ == '__main__':
                         handlers=[logging.StreamHandler(sys.stdout)])
 
     '''Global settings'''
+    # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
     args = get_args()
     assert args.input_type == 'minip', "Invalid input image type"
     assert args.label_type == 'vessel', "Invalid label type"
