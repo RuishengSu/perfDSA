@@ -6,4 +6,5 @@
 /.idea/
 **/__pycache__/
 *.pt
+*.h5
 /perf_dsa.egg-info/
