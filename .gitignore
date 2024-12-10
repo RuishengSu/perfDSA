@@ -1,5 +1,9 @@
 /analysis_scripts/
 /wandb/
 /results/
+/build/
 /data/ICAseg/
 /.idea/
+**/__pycache__/
+*.pt
+/perf_dsa.egg-info/
