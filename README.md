@@ -1,6 +1,4 @@
-# Spatio-temporal U-Net: artery-vein segmentation in digital subtraction angiography with PyTorch
-<a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-v1.9.0-red.svg?logo=PyTorch&style=for-the-badge" /></a>
-<a href="#"><img src="https://img.shields.io/badge/python-v3.6+-blue.svg?logo=python&style=for-the-badge" /></a>
+# perfDSA: Automatic Perfusion Imaging in Cerebral Digital Subtraction Angiography with PyTorch
 
 [//]: # (![input and output for a random image in the test dataset]&#40;https://i.imgur.com/GD8FcB7.png&#41;)
 
