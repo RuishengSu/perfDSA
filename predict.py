@@ -156,7 +156,7 @@ if __name__ == '__main__':
     # predict(net, test_img, args.out_img_path, device=device)
 
     dcm_fps = sorted(glob(os.path.join(args.in_img_path, '**', '*.dcm'), recursive=True))
-    # df_patients = pd.read_excel("/mnt/data1/TIC_NoIV_yvonne/240404-noiv_selection.xlsx")
+    # df_patients = pd.read_excel("/mnt/data1/patient_selection.xlsx")
     # patient_ids = df_patients['patient_id'].unique()
     for idx, fp in enumerate(dcm_fps):
         patient_id = Path(fp).parent.name

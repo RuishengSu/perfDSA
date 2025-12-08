@@ -401,15 +401,9 @@ if __name__ == '__main__':
         df = pd.DataFrame(columns=['patient_id', 'series',
                                    'ICA_CBV', 'ICA_CBF', 'ICA_MTT', 'ICA_Tmax', 'ICA_Peak',
                                    'MCA_CBV', 'MCA_CBF', 'MCA_MTT', 'MCA_Tmax', 'MCA_Peak'])
-        # df_selection = pd.read_excel("./221209-tic_perfect_frames.xlsx")
-        df_selection = pd.read_csv("./230712-tic_selection_with_venous_2.csv")
+        df_selection = pd.read_csv("./data_selection.csv")
         series_ids = df_selection['filename'].unique()
         for series_idx, series_row in df_selection.iterrows():
-            # if series_idx < 600:
-            #     continue
-            if series_idx == 435:
-                continue
-            # if series_row['patient_id'] != "R2580":4            #     continue
             series_path = os.path.join(settings.clean_dicom_path, series_row['patient_id'],
                                        f"{series_row['filename']}.dcm")
             if not os.path.isfile(series_path):
