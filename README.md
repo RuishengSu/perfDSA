@@ -18,15 +18,41 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Run example
+### 2. Usage
 
-Run:
+Run the script with an input DICOM and optional arguments:
 
 ```
-python example.py
+python perfDSA.py -i path/to/input.dcm -o path/to/output.png
 ```
 
-This assumes there's a DICOM file example.dicom in the root folder. Output is stored as perfusion_parameters.png.
+Examples:
+
+- Basic:
+
+```
+python perfDSA.py -i xxxx.dcm -o perfusion_parameters.png
+```
+
+- Specify model and device:
+
+```
+python perfDSA.py -i data/example.dcm -o out.png -m models/best_model_ica_top.pt -d cpu
+```
+
+- Set frame interval (milliseconds):
+
+```
+python perfDSA.py -i data/example.dcm -f 250
+```
+
+Options:
+
+- `-i`: Input DICOM file to be processed (required).
+- `-o`: Output image path (default: `./perfusion_parameters.png`).
+- `-m`: Path to the ICA top segmentation model (default: `./models/best_model_ica_top.pt`).
+- `-d`: Device to run the model on (`cuda` or `cpu`, default: `cuda`).
+- `-f`: Desired frame interval in milliseconds for the uniformly-timed sequence (default: `250`).
 
 ## Project Structure
 

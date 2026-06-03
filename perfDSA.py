@@ -91,7 +91,7 @@ def load_image(img_path, img_size, desired_frame_interval = 250):
 def get_args():
     parser = argparse.ArgumentParser(description='perfDSA to compute perfusion cerebral DSA')
     parser.add_argument('-i', dest='in_dcm', help='Input dicom file to be processed.')
-    parser.add_argument('-o', dest='out_img', default='./out.png', help='Output image path.')
+    parser.add_argument('-o', dest='out_img', default='./perfusion_parameters.png', help='Output image path.')
     parser.add_argument('-m', dest='model_path', default="./models/best_model_ica_top.pt", help='Path to the ICA top segmentation model.')
     parser.add_argument('-d', dest='device', default='cuda', help='Device to run the model on (e.g., "cuda" or "cpu").')
     parser.add_argument('-f', dest='desired_frame_interval', default=250, type=int, help='Desired frame interval in ms for the uniformly-timed sequence.')
