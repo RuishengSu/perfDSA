@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import wandb
-from evaluate import evaluate
+from scripts.evaluate import evaluate
 from unet import UNet, TemporalUNet, ConvLSTM, ConvGRU, TemporalTransformerUNet
 from utils.data_loading import DSADataset
 from utils.early_stopping import EarlyStopping

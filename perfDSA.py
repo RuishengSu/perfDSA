@@ -1,19 +1,18 @@
 import argparse
 import logging
 import sys
-from pathlib import Path
-import os
-import nibabel as nib
 import numpy as np
-import torch
+from matplotlib import pyplot as plt
+
+import nibabel as nib
 from PIL import Image
 from skimage.transform import resize
 import pydicom
-from unet import UNet, TemporalUNet, ConvLSTM, ConvGRU
-from glob import glob
 import pandas as pd
 from scipy.interpolate import interp1d
-import torch.nn.functional as F
+import cv2 as cv
+
+from DSASequence import DSASequence
 
 def cut_seq(seq, max_len):
     if seq.shape[0] > max_len:
@@ -25,7 +24,7 @@ def cut_seq(seq, max_len):
     return seq
 
 
-def load_and_preprocess_dicom(img_path):
+def load_and_preprocess_dicom(img_path, desired_frame_interval = 250):
     ds = pydicom.dcmread(img_path, defer_size="1 KB", stop_before_pixels=False, force=True)
     assert 2 ** (ds.BitsStored - 1) < ds.pixel_array.max() < 2 ** ds.BitsStored, \
         "Error: bits stored: {}, pixel value max: {}".format(ds.BitsStored, ds.pixel_array.max())
@@ -51,27 +50,26 @@ def load_and_preprocess_dicom(img_path):
         # remove the first frame as it is most likely a non-contrast frame or an un-subtracted frame
         cum_time_vector, seq = cum_time_vector[1:], seq[1:]
 
-        desired_frame_interval = 250  # ms
         interp = interp1d(cum_time_vector, seq, axis=0)
         seq = interp(np.arange(cum_time_vector[0], cum_time_vector[-1], desired_frame_interval))
 
-    MAX_LEN = 20  # Shorten unnecessarily long sequences.
-    if seq.shape[0] > MAX_LEN:
-        print("Warning: sequence is unnecessarily long ({}), "
-              "cutting it to {} frames based on minimum contrast.".format(seq.shape[0], MAX_LEN))
-    seq = cut_seq(seq, max_len=MAX_LEN)
+    # MAX_LEN = 20  # Shorten unnecessarily long sequences.
+    # if seq.shape[0] > MAX_LEN:
+    #     print("Warning: sequence is unnecessarily long ({}), "
+    #           "cutting it to {} frames based on minimum contrast.".format(seq.shape[0], MAX_LEN))
+    # seq = cut_seq(seq, max_len=MAX_LEN)
 
     seq = np.transpose(255 * (seq.astype(np.float32) / (2 ** ds.BitsStored - 1)), (1, 2, 0))
 
     return seq
 
 
-def load_image(img_path, img_size):
+def load_image(img_path, img_size, desired_frame_interval = 250):
     if '.nii' in img_path:
         img_obj = nib.load(img_path)
         img = np.transpose(img_obj.get_fdata(), (1, 0, 2))
     elif '.dcm' in img_path:
-        img = load_and_preprocess_dicom(img_path)
+        img = load_and_preprocess_dicom(img_path, desired_frame_interval=desired_frame_interval)
     else:
         img = np.asarray(Image.open(img_path))
 
@@ -90,42 +88,13 @@ def load_image(img_path, img_size):
     return img
 
 
-def predict(net, img, out_img_path=None, device='cuda'):
-    net.eval()
-    img = torch.as_tensor(img.copy()).float().contiguous().to(device=device, dtype=torch.float32)
-    img = torch.unsqueeze(img, 0)
-    with torch.no_grad():
-        masks_pred = net(img)
-        # masks_pred = (F.sigmoid(masks_pred) > 0.5).float()
-        mask_pred = Image.fromarray((F.sigmoid(masks_pred) > 0.5).cpu().detach().numpy().astype(np.uint8))
-    if out_img_path is not None:
-        Path(out_img_path).parent.mkdir(parents=True, exist_ok=True)
-        mask_pred.save(out_img_path)
-    return mask_pred
-
-
-def perfDSA(in_img_path, out_img_path, model_path="./models/best_model_ica_top.pt", device='cuda'):
-    """PerfDSA"""
-
-    '''Load the perfDSA segmentation model'''
-    model = torch.load(model_path, map_location=device)
-    logging.info(f'Model loaded from {model_path}')
-
-    '''Segmentation'''
-    if os.path.isfile(in_img_path):
-        seq = load_image(in_img_path, img_size = 1024)
-    else:
-        ValueError("Input file not found: {}".format(in_img_path))
-
-    ica_top_seg_mask = predict(model, in_img, out_img_path)
-
-
-
 def get_args():
     parser = argparse.ArgumentParser(description='perfDSA to compute perfusion cerebral DSA')
-    parser.add_argument('in_img', '-i', help='Input image to be segmented.')
-    parser.add_argument('out_img', '-o', default='./out.png', help='Segmentation result image.')
-
+    parser.add_argument('-i', dest='in_dcm', help='Input dicom file to be processed.')
+    parser.add_argument('-o', dest='out_img', default='./out.png', help='Output image path.')
+    parser.add_argument('-m', dest='model_path', default="./models/best_model_ica_top.pt", help='Path to the ICA top segmentation model.')
+    parser.add_argument('-d', dest='device', default='cuda', help='Device to run the model on (e.g., "cuda" or "cpu").')
+    parser.add_argument('-f', dest='desired_frame_interval', default=250, type=int, help='Desired frame interval in ms for the uniformly-timed sequence.')
     return parser.parse_args()
 
 
@@ -136,5 +105,48 @@ if __name__ == '__main__':
 
     '''Global settings'''
     args = get_args()
-    perfDSA(args.in_img_path, args.out_img_path)
+
+    '''Load the dicom file as a numpy array'''
+    frames = load_and_preprocess_dicom(args.in_dcm, desired_frame_interval=args.desired_frame_interval)  # Returns a uniformly-timed (W,H,N) array of frames
+
+    '''Create the DSA object'''
+    dsa = DSASequence(frames, frame_interval=args.desired_frame_interval)
+
+    '''Sample the Arterial Input Function'''
+    (_,aif_mask) = dsa.sample_AIF_from_perfDSA(args.model_path, device=args.device)
+
+    '''Plot the and save the results'''
+    minip = cv.cvtColor(dsa.MINIP(), cv.COLOR_GRAY2BGR).astype(np.uint8)
+    contours, _ = cv.findContours(aif_mask.astype(np.uint8), cv.RETR_TREE, cv.CHAIN_APPROX_NONE)
+    AIF_contour_points = max(contours, key=cv.contourArea)
+    cv.drawContours(minip, AIF_contour_points, -1, (255, 0, 0), thickness=2)
+    
+    fig, ax = plt.subplots(2,3, figsize=(16,10), tight_layout=True)
+    im = np.empty_like(ax, dtype=object)
+    ax[0,0].plot(dsa.Time(),dsa.AIF())
+    ax[0,0].set(title="AIF", ylabel="Dye concentration [a.u.]", xlabel="Time (s)")
+    
+    im[1,0] = ax[1,0].imshow(minip)
+    ax[1,0].set(title="MINIP",xticks=[],yticks=[])
+    
+    im[0,1] = ax[0,1].imshow(dsa.CBV(),cmap='jet')
+    ax[0,1].set(title="CBV",xticks=[],yticks=[])
+    fig.colorbar(im[0,1], ax=ax[0,1], orientation='vertical', fraction=0.046, pad=0.04)
+    
+    im[1,1] = ax[1,1].imshow(dsa.CBF(),cmap='jet')
+    ax[1,1].set(title="CBF",xticks=[],yticks=[])
+    fig.colorbar(im[1,1], ax=ax[1,1], orientation='vertical', fraction=0.046, pad=0.04)
+    
+    im[0,2] = ax[0,2].imshow(dsa.MTT(),cmap='jet')
+    ax[0,2].set(title="MTT",xticks=[],yticks=[])
+    fig.colorbar(im[0,2], ax=ax[0,2], orientation='vertical', fraction=0.046, pad=0.04)
+    
+    im[1,2] = ax[1,2].imshow(dsa.Tmax(),cmap='jet')
+    ax[1,2].set(title="Tmax",xticks=[],yticks=[])
+    fig.colorbar(im[1,2], ax=ax[1,2], orientation='vertical', fraction=0.046, pad=0.04)
+    
+    fig.suptitle('Perfusion parameters')
+    plt.savefig(args.out_img, dpi=300)
+
+    logging.info('Perfusion maps written to {:}'.format(args.out_img))
     logging.info("Done!")

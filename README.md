@@ -1,10 +1,10 @@
 # perfDSA: Automatic Perfusion Imaging in Cerebral Digital Subtraction Angiography
 
 ## Description
+
 This repository contains the code release for **[perfDSA](https://link.springer.com/article/10.1007/s11548-025-03359-4)**, a fully automatic cerebral perfusion imaging tool for digital subtraction angiography. You find an overview of the automatic framework below.
 
 <img width="1961" height="1645" alt="image" src="https://github.com/user-attachments/assets/962aab28-53a9-46ae-a38d-3d6cdc1a7721" />
-
 
 ## Quick Start
 
@@ -19,18 +19,20 @@ pip install -r requirements.txt
 ```
 
 ### Run example
+
 Run:
+
 ```
 python example.py
 ```
-This assumes there's a DICOM file example.dicom in the root folder. Output is stored as perfusion_parameters.png.
 
+This assumes there's a DICOM file example.dicom in the root folder. Output is stored as perfusion_parameters.png.
 
 ## Project Structure
 
 ```text
 perfDSA/
-|-- data/                       # Placeholder for DSA data folder
+|-- data/                       # Folder for DSA training data
 |-- models/                     # Trained model weights for segmentation of ICA top for AIF extraction
 |-- unet/                       # UNet Network architecture
 |-- utils/                      # Utility functions
@@ -38,6 +40,7 @@ perfDSA/
 ```
 
 ## Citation
+
 Please cite our paper if you find it useful.
 
 ```bibtex
@@ -54,6 +57,8 @@ Please cite our paper if you find it useful.
 ```
 
 ## Contact
+
 Feel free to contact us with questions or for collaboration.
+
 - Name: Ruisheng Su
 - Email: r.su@tue.nl

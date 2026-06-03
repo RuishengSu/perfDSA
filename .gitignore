@@ -3,3 +3,6 @@
 /results/
 /data/ICAseg/
 /.idea/
+/.vscode/
+__pycache__/
+
