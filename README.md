@@ -10,6 +10,8 @@ This repository contains the code release for **[perfDSA](https://link.springer.
 
 ### 1. Setup
 
+Tested Python version: 3.13
+
 ```bash
 git clone https://github.com/RuishengSu/perfDSA.git
 cd perfDSA
