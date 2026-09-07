@@ -10,6 +10,8 @@ This repository contains the code release for **[perfDSA](https://link.springer.
 
 ### 1. Setup
 
+Tested Python version: 3.13
+
 ```bash
 git clone https://github.com/RuishengSu/perfDSA.git
 cd perfDSA
@@ -80,7 +82,20 @@ Please cite our paper if you find it useful.
   year={2025},
   publisher={Springer}
 }
+
+@article{su2023towards,
+  title={Towards quantitative digital subtraction perfusion angiography: an animal study},
+  author={Su, Ruisheng and van der Sluijs, P Matthijs and Bobi, Joaquim and Taha, Aladdin and van Beusekom, Heleen MM and van der Lugt, Aad and Niessen, Wiro J and Ruijters, Danny and van Walsum, Theo},
+  journal={Medical Physics},
+  volume={50},
+  number={7},
+  pages={4055--4066},
+  year={2023},
+  publisher={Wiley Online Library}
+}
 ```
+## Acknowledgement
+Many thanks to Fer Fadstake for helping improve the code.
 
 ## Contact
 
