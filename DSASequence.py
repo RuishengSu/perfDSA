@@ -14,13 +14,14 @@ from PIL import Image
 import torch.nn.functional as F
 
 
-def modelfree_deconv(data:np.ndarray, aif:np.ndarray, dt, hct:float=0) -> np.ndarray:
+def modelfree_deconv(data:np.ndarray, aif:np.ndarray, dt, hct:float=0, rcond:float=0.15) -> np.ndarray:
     """ Non-parametric (model free) deconvolution.
 
     :param data: np.ndarray with shape (N,W,H), containing the Tissue Concentration Time Curve.
     :param aif: np.ndarray with shape (N), containing the Arterial Input Function.
     :param dt: time between frames in seconds.
     :param hct: hematocrit.
+    :param rcond: relative singular-value threshold of the truncated SVD.
     :return: an (N,W,H) numpy array containing the per-pixel result of deconv(data,aif).
     """
 
@@ -37,7 +38,7 @@ def modelfree_deconv(data:np.ndarray, aif:np.ndarray, dt, hct:float=0) -> np.nda
                       + (2 * aif[i - j] + aif[i - j + 1]) / 6
 
     # inverse of the convolution matrix
-    a_inv = pinv(a, rcond=0.15)
+    a_inv = pinv(a, rcond=rcond)
 
     # impulse response
     i = np.dot(1 / dt * a_inv,
@@ -48,6 +49,59 @@ def modelfree_deconv(data:np.ndarray, aif:np.ndarray, dt, hct:float=0) -> np.nda
 
 
 LEGACY_BACKGROUND = 170.0  # background intensity hard-coded in perfDSA <= v1.0
+DECONVOLUTION_METHODS = ("ssvd", "csvd", "osvd")
+OSVD_THRESHOLDS = tuple(float(t) for t in np.geomspace(0.005, 0.6, 24))
+
+
+def oscillation_index(trf: np.ndarray) -> np.ndarray:
+    """ Oscillation index of response functions (L, P) (Wu et al. 2003): mean |second difference| / maximum. """
+    fmax = trf.max(axis=0)
+    d2 = np.abs(trf[2:] - 2 * trf[1:-1] + trf[:-2]).sum(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(fmax > 0, d2 / (len(trf) * fmax), np.inf)
+
+
+def circulant_deconv(data: np.ndarray, aif: np.ndarray, dt, method: str = "osvd", rcond: float = 0.15,
+                     oi_target: float = 0.035, hct: float = 0, chunk: int = 65536) -> np.ndarray:
+    """ Block-circulant SVD deconvolution (Wu et al. 2003), insensitive to tracer delay between AIF and tissue.
+
+    The AIF and the curves are zero-padded to L = 2N samples. The singular values of the resulting circulant matrix
+    are the magnitudes of the DFT of the AIF, so the truncated SVD is computed with the FFT.
+
+    :param data: (N, ...) tissue concentration time curves.
+    :param aif: (N) arterial input function.
+    :param dt: time between frames in seconds.
+    :param method: "csvd" (fixed relative threshold `rcond`) or "osvd" (per pixel, the smallest threshold whose
+        response has an oscillation index <= `oi_target`).
+    :param hct: hematocrit.
+    :return: (2N, ...) response functions; samples >= N represent negative delays (tissue before AIF).
+    """
+    aif = np.asarray(aif, dtype=float) / (1 - hct)
+    n = len(aif)
+    length = 2 * n
+    spectrum = np.fft.rfft(aif, length)
+    mag = np.abs(spectrum)
+    relative = mag / mag.max() if mag.max() > 0 else mag
+    inverse = np.where(mag > 0, 1 / np.where(mag > 0, spectrum, 1), 0)
+    thresholds = (rcond,) if method == "csvd" else OSVD_THRESHOLDS
+
+    flat = data.reshape(n, -1)
+    out = np.empty((length, flat.shape[1]))
+    for start in range(0, flat.shape[1], chunk):
+        sl = slice(start, min(start + chunk, flat.shape[1]))
+        spectrum_c = np.fft.rfft(flat[:, sl].astype(np.float64), length, axis=0)
+        done = np.zeros(sl.stop - sl.start, dtype=bool)
+        for threshold in thresholds:  # ascending: least regularisation first
+            trf = np.fft.irfft(spectrum_c * (inverse * (relative >= threshold))[:, None], length, axis=0) / dt
+            if method == "csvd":
+                out[:, sl] = trf
+                break
+            ok = ~done & (oscillation_index(trf) <= oi_target)
+            out[:, sl][:, ok] = trf[:, ok]
+            done |= ok
+        else:
+            out[:, sl][:, ~done] = trf[:, ~done]  # never smooth enough: strongest regularisation
+    return out.reshape((length,) + data.shape[1:])
 
 
 def estimate_background(images: np.ndarray, arterial_fraction: float = 0.005, arrival_threshold: float = 0.1,
@@ -239,7 +293,8 @@ class DSASequence:
             self.get_perfusion_parameters()
         return self._tmax
 
-    def __init__(self, images: np.ndarray, frame_interval: float, background: Union[str, float] = "auto"):
+    def __init__(self, images: np.ndarray, frame_interval: float, background: Union[str, float] = "auto",
+                 deconvolution: str = "ssvd", rcond: float = 0.15, oi_target: float = 0.035):
         """ Creates a DSAFile object.
 
         :param images: an (W, H, N) numpy array of uniformly sampled DSA images.
@@ -247,7 +302,15 @@ class DSASequence:
         :param background: zero-contrast intensity of the subtracted images. "auto" (default) estimates it from the
             frames before contrast arrival (see estimate_background); a number fixes it. perfDSA <= v1.0 used a
             fixed value of 170 (LEGACY_BACKGROUND).
+        :param deconvolution: "ssvd" (default; truncated SVD of the Volterra convolution matrix, as in v1.0),
+            "csvd" (block-circulant SVD with fixed threshold) or "osvd" (block-circulant SVD with per-pixel
+            oscillation-index threshold). Block-circulant SVD is insensitive to tracer delay.
+        :param rcond: relative singular-value threshold for "ssvd" and "csvd".
+        :param oi_target: oscillation-index target for "osvd".
         """
+        if deconvolution not in DECONVOLUTION_METHODS:
+            raise ValueError("deconvolution must be one of {}".format(DECONVOLUTION_METHODS))
+        self._deconvolution, self._rcond, self._oi_target = deconvolution, rcond, oi_target
         (w, h, n) = images.shape
         self._timestep = frame_interval / 1000  # seconds
         self._time = np.arange(n) * self._timestep
@@ -351,7 +414,11 @@ class DSASequence:
         :return: a size (N,W,H) numpy array containing the per-pixel Tissue Response Functions.
         """
         time_start = time.time()
-        self._trf_map = modelfree_deconv(self.TCTC(), self.AIF(), self._timestep)
+        if self._deconvolution == "ssvd":
+            self._trf_map = modelfree_deconv(self.TCTC(), self.AIF(), self._timestep, rcond=self._rcond)
+        else:
+            self._trf_map = circulant_deconv(self.TCTC(), self.AIF(), self._timestep, method=self._deconvolution,
+                                             rcond=self._rcond, oi_target=self._oi_target)
         print("Calculated TRF map in %.3fs" % (time.time() - time_start))
         return self.TRF()
 
@@ -368,7 +435,10 @@ class DSASequence:
         self._cbf[self._cbf < 0] = 0
 
         # Tmax in s
-        self._tmax = self._timestep * np.argmax(trf, axis=0)
+        idx = np.argmax(trf, axis=0)
+        if trf.shape[0] > self._n_images:  # block-circulant: samples >= N are negative delays
+            idx = np.where(idx >= self._n_images, idx - trf.shape[0], idx)
+        self._tmax = self._timestep * idx
 
         # blood volume (relative, dimensionless)
         self._cbv = self._timestep * np.sum(trf, axis=0)

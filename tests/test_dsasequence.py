@@ -128,3 +128,48 @@ def test_dicom_loading_keeps_the_last_frame(tmp_path):
     seq = perfdsa.load_and_preprocess_dicom(str(path), desired_frame_interval=250)
     # First frame is dropped by design (500 ms .. 6000 ms remain): 500, 750, ..., 6000 ms = 23 frames.
     assert seq.shape[2] == 23
+
+
+def synthetic_delayed(delay_s, n=72, size=32):
+    t = np.arange(n) * DT_MS / 1000
+    x = np.clip((t - 1.5) / 1.5, 0, None)
+    aif = 0.5 * x ** 3 * np.exp(3 * (1 - x))
+    fine = np.arange(0, t[-1] + 1e-9, 0.01)
+    residue = np.where(fine >= delay_s, np.exp(-(fine - delay_s) / MTT_S), 0.0)
+    tissue = np.interp(t, fine, np.convolve(np.interp(fine, t, aif), residue)[:len(fine)] * 0.01 * CBV_TRUE / MTT_S)
+    conc = np.zeros((n, size, size))
+    aif_mask = np.zeros((size, size), bool)
+    aif_mask[2:5, 2:5] = True
+    tissue_mask = np.zeros((size, size), bool)
+    tissue_mask[10:, :] = True
+    conc[:, aif_mask] = aif[:, None]
+    conc[:, tissue_mask] = tissue[:, None]
+    return np.moveaxis(170.0 * (1 - conc), 0, 2), aif_mask, tissue_mask
+
+
+@pytest.mark.parametrize("method", ["csvd", "osvd"])
+def test_block_circulant_svd_is_delay_insensitive(method):
+    cbf = {}
+    for delay in (0.0, 2.0):
+        images, aif_mask, tissue = synthetic_delayed(delay)
+        dsa = DSASequence(images, frame_interval=DT_MS, deconvolution=method)
+        dsa.sample_AIF_from_mask(aif_mask)
+        cbf[delay] = np.median(dsa.CBF()[tissue])
+        assert dsa.TRF().shape[0] == 2 * images.shape[2]
+        assert abs(np.median(dsa.Tmax()[tissue]) - delay) <= 1.0
+    legacy = {}
+    for delay in (0.0, 2.0):
+        images, aif_mask, tissue = synthetic_delayed(delay)
+        dsa = DSASequence(images, frame_interval=DT_MS, deconvolution="ssvd")
+        dsa.sample_AIF_from_mask(aif_mask)
+        legacy[delay] = np.median(dsa.CBF()[tissue])
+    assert abs(cbf[2.0] / cbf[0.0] - 1) < 0.05            # block-circulant: delay-insensitive
+    assert legacy[2.0] / legacy[0.0] < 0.9                  # standard SVD loses CBF with delay
+
+
+def test_default_deconvolution_unchanged():
+    images, aif_mask, _ = synthetic_run()
+    a = perfusion(images, aif_mask, "auto")
+    b = DSASequence(images, frame_interval=DT_MS, background="auto", deconvolution="ssvd", rcond=0.15)
+    b.sample_AIF_from_mask(aif_mask)
+    np.testing.assert_array_equal(a.CBF(), b.CBF())

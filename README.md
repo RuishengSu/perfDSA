@@ -55,6 +55,8 @@ Options:
 - `-m`: Path to the ICA top segmentation model (default: `./models/best_model_ica_top.pt`).
 - `-d`: Device to run the model on (`cuda` or `cpu`, default: `cuda`).
 - `-f`: Desired frame interval in milliseconds for the uniformly-timed sequence (default: `250`).
+- `--deconvolution`: `ssvd` (default, truncated SVD as in v1.0), `csvd` or `osvd` (block-circulant SVD, insensitive to
+  tracer delay; `--rcond` and `--oi-target` set their thresholds). See [CHANGELOG.md](CHANGELOG.md) for the trade-offs.
 - `-b`: Zero-contrast (background) intensity of the DSA: `auto` (default; estimated from the frames before contrast
   arrival) or a number. perfDSA v1.0 used a fixed `170`; use `-b 170` to reproduce earlier results.
 

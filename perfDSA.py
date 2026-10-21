@@ -96,6 +96,10 @@ def get_args():
     parser.add_argument('-m', dest='model_path', default="./models/best_model_ica_top.pt", help='Path to the ICA top segmentation model.')
     parser.add_argument('-d', dest='device', default='cuda', help='Device to run the model on (e.g., "cuda" or "cpu").')
     parser.add_argument('-f', dest='desired_frame_interval', default=250, type=int, help='Desired frame interval in ms for the uniformly-timed sequence.')
+    parser.add_argument('--deconvolution', default='ssvd', choices=['ssvd', 'csvd', 'osvd'],
+                        help='ssvd: truncated SVD (default, as v1.0); csvd/osvd: block-circulant SVD (delay-insensitive)')
+    parser.add_argument('--rcond', default=0.15, type=float, help='Relative SVD threshold for ssvd/csvd.')
+    parser.add_argument('--oi-target', default=0.035, type=float, help='Oscillation-index target for osvd.')
     parser.add_argument('-b', dest='background', default='auto',
                         help='Zero-contrast intensity of the DSA: "auto" (estimated per run, default) or a number '
                              '(perfDSA <= v1.0 used 170).')
@@ -115,7 +119,8 @@ if __name__ == '__main__':
 
     '''Create the DSA object'''
     background = args.background if args.background == 'auto' else float(args.background)
-    dsa = DSASequence(frames, frame_interval=args.desired_frame_interval, background=background)
+    dsa = DSASequence(frames, frame_interval=args.desired_frame_interval, background=background,
+                      deconvolution=args.deconvolution, rcond=args.rcond, oi_target=args.oi_target)
     logging.info('Background intensity: {:.1f}'.format(dsa.Background()))
 
     '''Sample the Arterial Input Function'''
