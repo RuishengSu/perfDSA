@@ -55,6 +55,17 @@ Options:
 - `-m`: Path to the ICA top segmentation model (default: `./models/best_model_ica_top.pt`).
 - `-d`: Device to run the model on (`cuda` or `cpu`, default: `cuda`).
 - `-f`: Desired frame interval in milliseconds for the uniformly-timed sequence (default: `250`).
+- `-b`: Zero-contrast (background) intensity of the DSA: `auto` (default; estimated from the frames before contrast
+  arrival) or a number. perfDSA v1.0 used a fixed `170`; use `-b 170` to reproduce earlier results.
+
+Units: time in seconds; CBF in 1/s and CBV dimensionless (relative indices, as the concentration scale is
+relative); MTT and Tmax in seconds. See [CHANGELOG.md](CHANGELOG.md) for the changes since v1.0.
+
+### 3. Tests
+
+```
+python -m pytest tests
+```
 
 ## Project Structure
 
