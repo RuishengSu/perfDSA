@@ -51,7 +51,8 @@ def load_and_preprocess_dicom(img_path, desired_frame_interval = 250):
         cum_time_vector, seq = cum_time_vector[1:], seq[1:]
 
         interp = interp1d(cum_time_vector, seq, axis=0)
-        seq = interp(np.arange(cum_time_vector[0], cum_time_vector[-1], desired_frame_interval))
+        # Include the last acquired frame when it falls on the uniform grid.
+        seq = interp(np.arange(cum_time_vector[0], cum_time_vector[-1] + 1e-6, desired_frame_interval))
 
     # MAX_LEN = 20  # Shorten unnecessarily long sequences.
     # if seq.shape[0] > MAX_LEN:
@@ -95,6 +96,9 @@ def get_args():
     parser.add_argument('-m', dest='model_path', default="./models/best_model_ica_top.pt", help='Path to the ICA top segmentation model.')
     parser.add_argument('-d', dest='device', default='cuda', help='Device to run the model on (e.g., "cuda" or "cpu").')
     parser.add_argument('-f', dest='desired_frame_interval', default=250, type=int, help='Desired frame interval in ms for the uniformly-timed sequence.')
+    parser.add_argument('-b', dest='background', default='auto',
+                        help='Zero-contrast intensity of the DSA: "auto" (estimated per run, default) or a number '
+                             '(perfDSA <= v1.0 used 170).')
     return parser.parse_args()
 
 
@@ -110,7 +114,9 @@ if __name__ == '__main__':
     frames = load_and_preprocess_dicom(args.in_dcm, desired_frame_interval=args.desired_frame_interval)  # Returns a uniformly-timed (W,H,N) array of frames
 
     '''Create the DSA object'''
-    dsa = DSASequence(frames, frame_interval=args.desired_frame_interval)
+    background = args.background if args.background == 'auto' else float(args.background)
+    dsa = DSASequence(frames, frame_interval=args.desired_frame_interval, background=background)
+    logging.info('Background intensity: {:.1f}'.format(dsa.Background()))
 
     '''Sample the Arterial Input Function'''
     (_,aif_mask) = dsa.sample_AIF_from_perfDSA(args.model_path, device=args.device)
@@ -130,19 +136,19 @@ if __name__ == '__main__':
     ax[1,0].set(title="MINIP",xticks=[],yticks=[])
     
     im[0,1] = ax[0,1].imshow(dsa.CBV(),cmap='jet')
-    ax[0,1].set(title="CBV",xticks=[],yticks=[])
+    ax[0,1].set(title="CBV (relative)",xticks=[],yticks=[])
     fig.colorbar(im[0,1], ax=ax[0,1], orientation='vertical', fraction=0.046, pad=0.04)
     
     im[1,1] = ax[1,1].imshow(dsa.CBF(),cmap='jet')
-    ax[1,1].set(title="CBF",xticks=[],yticks=[])
+    ax[1,1].set(title="CBF (relative, 1/s)",xticks=[],yticks=[])
     fig.colorbar(im[1,1], ax=ax[1,1], orientation='vertical', fraction=0.046, pad=0.04)
     
     im[0,2] = ax[0,2].imshow(dsa.MTT(),cmap='jet')
-    ax[0,2].set(title="MTT",xticks=[],yticks=[])
+    ax[0,2].set(title="MTT (s)",xticks=[],yticks=[])
     fig.colorbar(im[0,2], ax=ax[0,2], orientation='vertical', fraction=0.046, pad=0.04)
     
     im[1,2] = ax[1,2].imshow(dsa.Tmax(),cmap='jet')
-    ax[1,2].set(title="Tmax",xticks=[],yticks=[])
+    ax[1,2].set(title="Tmax (s)",xticks=[],yticks=[])
     fig.colorbar(im[1,2], ax=ax[1,2], orientation='vertical', fraction=0.046, pad=0.04)
     
     fig.suptitle('Perfusion parameters')

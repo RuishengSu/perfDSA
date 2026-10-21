@@ -1,6 +1,7 @@
 import numpy as np
 import time
-from typing import Callable, Optional
+import warnings
+from typing import Callable, Optional, Union
 
 import torch
 from numpy.linalg import pinv
@@ -46,6 +47,43 @@ def modelfree_deconv(data:np.ndarray, aif:np.ndarray, dt, hct:float=0) -> np.nda
     return i
 
 
+LEGACY_BACKGROUND = 170.0  # background intensity hard-coded in perfDSA <= v1.0
+
+
+def estimate_background(images: np.ndarray, arterial_fraction: float = 0.005, arrival_threshold: float = 0.1,
+                        fov_min: float = 10.0) -> tuple[float, np.ndarray]:
+    """ Estimates the zero-contrast (background) intensity of a subtracted DSA run from its own frames.
+
+    Contrast arrival is detected on the darkest pixels of the minimum intensity projection (the large arteries):
+    the first frame in which their mean intensity has dropped by more than `arrival_threshold` of its total drop.
+    The background is the median intensity, within the field of view, of the frames before arrival.
+
+    :param images: (N, W, H) uniformly sampled DSA frames (vessels dark).
+    :param arterial_fraction: fraction of field-of-view pixels (darkest in the MinIP) used to detect arrival.
+    :param arrival_threshold: fraction of the arterial intensity drop that defines contrast arrival.
+    :param fov_min: pixels whose mean intensity is below this value are outside the collimated field of view.
+    :return: (background intensity, indices of the frames used).
+    """
+    fov = images.mean(axis=0) > fov_min
+    if not fov.any():
+        fov = np.ones(images.shape[1:], dtype=bool)
+    pixels = images[:, fov]
+    n_art = max(1, int(arterial_fraction * pixels.shape[1]))
+    arteries = np.argsort(pixels.min(axis=0))[:n_art]
+    curve = pixels[:, arteries].mean(axis=1)
+    drop = curve[0] - curve
+    if drop.max() <= 0:
+        pre = np.arange(len(images))  # no contrast arrival detected: every frame is background
+    else:
+        arrival = int(np.argmax(drop >= arrival_threshold * drop.max()))
+        pre = np.arange(arrival)
+    if len(pre) == 0:
+        warnings.warn("No frame before contrast arrival: background estimated from the first frame, which already "
+                      "contains contrast. Perfusion values may be biased.")
+        pre = np.array([0])
+    return float(np.median(pixels[pre])), pre
+
+
 def segment_ica_top(net, img, out_img_path=None, device='cuda'):
     net.eval()
     img = torch.as_tensor(img.copy()).float().contiguous().to(device=device, dtype=torch.float32)
@@ -85,7 +123,7 @@ class DSASequence:
         """
         return np.max(self._dsa_images_mod, axis=0)
 
-    _dsa_images_raw: np.ndarray = None  # standard DSA with base level at 170 and blood vessels darker.
+    _dsa_images_raw: np.ndarray = None  # standard DSA with base level at the background and blood vessels darker.
     def Frames(self, frames: int | slice | np.ndarray | list[int]) -> np.ndarray:
         """ Get a specified frame or frames from the DSA sequence.
 
@@ -113,11 +151,18 @@ class DSASequence:
 
     _timestep: float = np.nan
     def Timestep(self) -> float:
+        """ Time between frames, in seconds. """
         return self._timestep
 
     _time: np.ndarray = None
     def Time(self) -> np.ndarray:
+        """ Frame times, in seconds. """
         return self._time
+
+    _background: float = np.nan
+    def Background(self) -> float:
+        """ Zero-contrast intensity of the subtracted DSA, used to convert intensities to concentration. """
+        return self._background
 
     _aif: np.ndarray = None
 
@@ -194,18 +239,25 @@ class DSASequence:
             self.get_perfusion_parameters()
         return self._tmax
 
-    def __init__(self, images: np.ndarray, frame_interval: float):
+    def __init__(self, images: np.ndarray, frame_interval: float, background: Union[str, float] = "auto"):
         """ Creates a DSAFile object.
 
         :param images: an (W, H, N) numpy array of uniformly sampled DSA images.
-        :param timestep: the time between two consecutive frames, in seconds.
+        :param frame_interval: the time between two consecutive frames, in milliseconds.
+        :param background: zero-contrast intensity of the subtracted images. "auto" (default) estimates it from the
+            frames before contrast arrival (see estimate_background); a number fixes it. perfDSA <= v1.0 used a
+            fixed value of 170 (LEGACY_BACKGROUND).
         """
         (w, h, n) = images.shape
-        self._timestep = frame_interval
-        self._time = np.arange(n) * frame_interval
+        self._timestep = frame_interval / 1000  # seconds
+        self._time = np.arange(n) * self._timestep
         self._n_images = n
         self._image_size = (w, h)
         self._dsa_images_raw = np.moveaxis(images, 2, 0)
+        if background == "auto":
+            self._background, _ = estimate_background(self._dsa_images_raw)
+        else:
+            self._background = float(background)
         self._create_from_raw_images()
 
     def _create_from_raw_images(self):
@@ -226,9 +278,10 @@ class DSASequence:
         :param func: Function to apply to the downsampling process.
         :return: Tuple containing (CBV, CBF, MTT, T_max)
         """
-        cbv = self.CBV()
-        cbf = self.CBF()
-        mtt = self.MTT()
+        # Copies: masking must not overwrite the cached full-resolution maps.
+        cbv = self.CBV().copy()
+        cbf = self.CBF().copy()
+        mtt = self.MTT().copy()
         tmax = self.Tmax().astype(np.float32)  # int cannot hold nan values
         if mask is not None:
             cbv[mask] = np.nan
@@ -288,8 +341,8 @@ class DSASequence:
 
     def _preprocess_dsa(self):
         mod:np.ndarray = self._dsa_images_raw.astype(np.float32)
-        mod = mod / 170  # Adjust range from [0..1]
-        mod = 1 - mod  # inverse dsa image to have positive TICs when contrasts arrive
+        mod = mod / self._background  # background -> 1
+        mod = 1 - mod  # inverse dsa image to have positive TICs when contrasts arrive (background -> 0)
         self._dsa_images_mod = mod
 
     def calculate_TRF_map(self) -> np.ndarray:
@@ -309,18 +362,17 @@ class DSASequence:
         """
         time_start = time.time()
         trf = self.TRF()
-        # compute flow in ml/100ml/min
+        # Units: the concentration scale is relative (AIF and tissue share it), so CBF and CBV are relative indices.
+        # flow in 1/s (relative)
         self._cbf = np.max(trf, axis=0)
         self._cbf[self._cbf < 0] = 0
-        # F = f * (100 * 60)
 
-        # compute Tmax
+        # Tmax in s
         self._tmax = self._timestep * np.argmax(trf, axis=0)
 
-        # compute blood volume in ml/100ml
+        # blood volume (relative, dimensionless)
         self._cbv = self._timestep * np.sum(trf, axis=0)
         self._cbv[self._cbv < 0] = 0
-        # V = v * 100
 
         epsilon = 1e-12
         # mean transit time in s
